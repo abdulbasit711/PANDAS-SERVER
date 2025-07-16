@@ -4,7 +4,8 @@ import cookieParser from "cookie-parser"
 
 const app = express();
 app.use(cors({
-    origin: process.env.CORS_ORIGIN || 'https://pandas-frontend-new.vercel.app',
+    // origin: process.env.CORS_ORIGIN || 'https://pandas-frontend-new.vercel.app',
+    origin: '*',
     credentials: true
 }))
 
