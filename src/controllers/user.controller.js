@@ -195,7 +195,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
     try {
         const { username, password } = req.body
-        // console.log({username, password});
+        console.log({username, password});
 
 
         if (!username || !password) {  // check logic
