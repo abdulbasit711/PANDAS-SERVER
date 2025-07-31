@@ -35,4 +35,19 @@ app.use("/api/v1/bill", billRoutes);
 app.use("/api/v1/saleReturn", saleReturnRoutes); 
 app.use("/api/v1/purchase", purchaseRoutes); 
 app.use("/api/v1/dashboard", dashboardRoutes); 
+
+import { ApiError } from "./utils/ApiError.js"; // adjust path if needed
+
+app.use((err, req, res, next) => {
+  console.error("🔥 Global Error Handler:", err);
+
+  const statusCode = err.statusCode || 500;
+
+  res.status(statusCode).json({
+    success: false,
+    message: err.message || "Internal Server Error",
+    errors: err.errors || [],
+    stack: process.env.NODE_ENV === "production" ? undefined : err.stack,
+  });
+});
 export { app }
