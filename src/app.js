@@ -39,13 +39,13 @@ app.use("/api/v1/dashboard", dashboardRoutes);
 import { ApiError } from "./utils/ApiError.js"; // adjust path if needed
 
 app.use((err, req, res, next) => {
-  console.error("🔥 Global Error Handler:", err);
+  console.error("🔥 Global Error Handler:", err.message);
 
   const statusCode = err.statusCode || 500;
 
   res.status(statusCode).json({
     success: false,
-    message: err || "Internal Server Error",
+    message: err.message || "Internal Server Error",
     errors: err.errors || [],
     stack: process.env.NODE_ENV === "production" ? undefined : err.stack,
   });
