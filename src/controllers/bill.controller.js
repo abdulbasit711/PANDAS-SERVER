@@ -288,7 +288,13 @@ const registerBill = asyncHandler(async (req, res) => {
         });
 
     } catch (error) {
-        throw new ApiError(500, `${error.message}`);
+        if (error instanceof ApiError) {
+            throw error;
+        }
+
+        // Otherwise, treat it as internal server error
+        console.error("Unexpected error in registerBill:", error);
+        throw new ApiError(500, "Internal Server Error", [], error.stack);
     }
 });
 
