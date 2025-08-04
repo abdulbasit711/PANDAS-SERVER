@@ -374,6 +374,81 @@ const registerProduct = asyncHandler(async (req, res) => {
     }
 });
 
+const deleteProduct = asyncHandler(async (req, res) => {
+    const { productId } = req.params;
+
+    if (!productId) {
+        throw new ApiError(400, "Product ID is required!");
+    }
+
+    const user = req.user;
+    if (!user) {
+        throw new ApiError(401, "Authorization Failed!");
+    }
+
+    const BusinessId = user.BusinessId;
+    const transactionManager = new TransactionManager();
+
+    try {
+        await transactionManager.run(async (transaction) => {
+            const product = await Product.findOne({ _id: productId, BusinessId });
+
+            if (!product) {
+                throw new ApiError(404, "Product not found!");
+            }
+
+            const salePrices = await SalePrice.findById(product.salePricesId);
+            const statusOfPrices = await StatusOfPrice.find({ productId });
+
+            // Save original inventory account balance for rollback
+            const inventoryAccount = await IndividualAccount.findOne({
+                BusinessId,
+                individualAccountName: "Inventory",
+            });
+
+            if (!inventoryAccount) {
+                throw new ApiError(400, "Inventory account not found!");
+            }
+
+            const originalInventoryBalance = inventoryAccount.accountBalance;
+            inventoryAccount.accountBalance -= Number(product.productPurchasePrice) * Number(product.productTotalQuantity / product.productPack);
+            transaction.addOperation(
+                async () => await inventoryAccount.save(),
+                async () => {
+                    inventoryAccount.accountBalance = originalInventoryBalance;
+                    await inventoryAccount.save();
+                }
+            );
+
+            // Delete related data
+            transaction.addOperation(
+                async () => await SalePrice.deleteOne({ _id: product.salePricesId }),
+                async () => salePrices && await salePrices.save()
+            );
+
+            for (const status of statusOfPrices) {
+                transaction.addOperation(
+                    async () => await StatusOfPrice.deleteOne({ _id: status._id }),
+                    async () => await status.save()
+                );
+            }
+
+            // Delete the product itself
+            transaction.addOperation(
+                async () => await Product.deleteOne({ _id: product._id }),
+                async () => await product.save()
+            );
+
+            return res.status(200).json(
+                new ApiResponse(200, {}, "Product deleted successfully!")
+            );
+        });
+    } catch (error) {
+        throw new ApiError(500, `${error.message}`);
+    }
+});
+
+
 const updateProduct = asyncHandler(async (req, res) => {
     const {
         productId, productCode, productName, categoryId, typeId, companyId,
@@ -776,6 +851,7 @@ export {
     updateType,
     registerProduct,
     updateProduct,
+    deleteProduct,
     getProducts,
     createBarcode,
     barcodePDF,

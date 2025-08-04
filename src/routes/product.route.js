@@ -3,7 +3,8 @@ import { registerProduct, getProducts, updateProduct,
     registerCategory, getCategories, updateCategory,
     registerType, getTypes, updateType,
     createBarcode, barcodePDF,
-    allProductsWithoutBarcode
+    allProductsWithoutBarcode,
+    deleteProduct
 } from "../controllers/product.controller.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js"
 
@@ -14,6 +15,7 @@ const router = Router();
 router.route("/add-product").post(verifyJWT, registerProduct)
 router.route("/get-products").get(verifyJWT, getProducts)
 router.route("/update-product").patch(verifyJWT, updateProduct)
+router.route("/:productId").delete(verifyJWT, deleteProduct)
 
 router.route("/add-category").post(verifyJWT, registerCategory)
 router.route("/get-categories").get(verifyJWT, getCategories)
