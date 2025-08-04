@@ -74,37 +74,25 @@ ProductSchema.statics.allocatePurchasePrice = async function (productId, require
         productId: productId,
         remainingQuantity: { $gt: 0 }
     }).sort({ createdAt: 1 });
-    const quantityWithUnits = requiredQuantity * (itemUnits);
 
+    const quantityWithUnits = requiredQuantity * itemUnits;
     let remainingRequiredQuantity = quantityWithUnits;
     let totalCost = 0;
 
     const product = await this.findById(productId, 'productPack');
 
     for (const record of statusRecords) {
-        // console.log(`Product Pack: ${product.productPack}`);
-        // console.log(`New Price: ${record.newPrice}`);
-        // console.log(`Total Cost Before: ${totalCost}`);
-
         if (remainingRequiredQuantity <= 0) break;
 
-
         const usedQuantity = Math.min(record.remainingQuantity, remainingRequiredQuantity);
-        // console.log(`Used Quantity: ${usedQuantity}`);
-        totalCost += usedQuantity * parseFloat(record.newPrice) / parseFloat(product.productPack)
+        totalCost += usedQuantity * parseFloat(record.newPrice) / parseFloat(product.productPack);
         remainingRequiredQuantity -= usedQuantity;
 
-        // console.log(`Quantity with Units: ${quantityWithUnits}`);
-        // console.log(`Remaining Required Quantity: ${remainingRequiredQuantity}`);
-        // console.log(`Remaining Quantity in Record: ${record.remainingQuantity}`);
-
-        const originalRemainingQuantity = record.remainingQuantity; // Capture original value
+        const originalRemainingQuantity = record.remainingQuantity;
         record.remainingQuantity -= usedQuantity;
 
         transaction.addOperation(
-            async () => {
-                await record.save();
-            },
+            async () => await record.save(),
             async () => {
                 record.remainingQuantity = originalRemainingQuantity;
                 await record.save();
@@ -112,10 +100,29 @@ ProductSchema.statics.allocatePurchasePrice = async function (productId, require
         );
     }
 
+    // Handle negative stock by creating a virtual negative entry
     if (remainingRequiredQuantity > 0) {
-        const product = await this.findById(productId, 'productName');
-        const productName = product ? product.productName : 'Unknown Product';
-        throw new Error(`Insufficient stock for product ${productName}. Missing ${remainingRequiredQuantity} units.`);
+        const latestPrice = statusRecords.length > 0
+            ? parseFloat(statusRecords[statusRecords.length - 1].newPrice)
+            : 0;
+
+        const negativeCost = remainingRequiredQuantity * latestPrice / parseFloat(product.productPack);
+        totalCost += negativeCost;
+
+        // Optionally: Record a negative status if you want to track it in DB
+        const StatusOfPrice = mongoose.model('StatusOfPrice');
+        const negativeStatus = new StatusOfPrice({
+            productId,
+            oldPrice: latestPrice,
+            newPrice: latestPrice,
+            remainingQuantity: -remainingRequiredQuantity,
+            changedBy: transaction.userId || null // pass userId in transaction context if needed
+        });
+
+        transaction.addOperation(
+            async () => await negativeStatus.save(),
+            async () => await StatusOfPrice.deleteOne({ _id: negativeStatus._id })
+        );
     }
 
     return Number(totalCost);

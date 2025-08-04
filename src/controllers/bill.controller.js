@@ -107,9 +107,9 @@ const registerBill = asyncHandler(async (req, res) => {
                 const originalProductQuantity = product.productTotalQuantity; // Capture original value for rollback
                 product.productTotalQuantity -= (quantity * billItemUnit);
 
-                if (product.productTotalQuantity < 0) {
-                    throw new ApiError(400, `Insufficient stock for product: ${product.productName}`);
-                }
+                // if (product.productTotalQuantity < 0) {
+                //     throw new ApiError(400, `Insufficient stock for product: ${product.productName}`);
+                // }
 
                 transaction.addOperation(
                     async () => await product.save(),
