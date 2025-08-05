@@ -120,9 +120,9 @@ const registerBill = asyncHandler(async (req, res) => {
                 );
             }
 
-            if (flatDiscount > totalPurchaseAmount) {
-                throw new ApiError(400, "Flat discount cannot exceed total purchase amount!");
-            }
+            // if (flatDiscount > totalPurchaseAmount) {
+            //     throw new ApiError(400, "Flat discount cannot exceed total purchase amount!");
+            // }
 
             const inventoryAccount = await IndividualAccount.findOne({
                 BusinessId,
@@ -688,7 +688,7 @@ const updateBill = asyncHandler(async (req, res) => {
             res.status(200).json(new ApiResponse(200, oldBill, "Bill updated successfully!"));
         });
     } catch (error) {
-        throw new ApiError(500, `Transaction failed: ${error.message}`);
+        throw new ApiError(500, `${error.message}`);
     }
 });
 
@@ -713,7 +713,7 @@ const getBills = asyncHandler(async (req, res) => {
     if (billStatus) query.billStatus = { $in: billStatus.split(",") };
     if (startDate && endDate) {
         query.createdAt = {
-            $gte: new Date(new Date(startDate).setHours(0, 0, 0, 0)),
+            $gt: new Date(new Date(startDate).setHours(0, 0, 0, 0)),
             $lte: new Date(new Date(endDate).setHours(23, 59, 59, 999)),
         };
     }
@@ -799,60 +799,64 @@ const getSingleBill = asyncHandler(async (req, res) => {
     const { billNo } = req.params;
 
     // Validate the user
-    const user = req.user;
-    if (!user) {
-        throw new ApiError(401, "Authorization Failed!");
-    }
-
-    const BusinessId = user.BusinessId;
-
-    // Validate bill number
-    if (!billNo) {
-        throw new ApiError(400, "Bill number is required!");
-    }
-
-    // Find the bill and populate all required details
-    const bill = await Bill.findOne({ BusinessId, billNo })
-        .populate({
-            path: "customer",
-            select: "customerName email mobileNo ntnNumber cnic customerRegion",
-        })
-        .populate({
-            path: "BusinessId",
-            select: "businessName businessRegion exemptedParagraph",
-            populate: {
-                path: "owner",
-                select: "mobileno email",
-            },
-        })
-        .populate({
-            path: "salesPerson",
-            select: "firstname lastname email role",
-        })
-        .populate({
-            path: "billItems.productId",
-            select: "productName productPack productUnit productPurchasePrice ",
-            populate: [
-                {
-                    path: "companyId",
-                    select: "companyName",
+    try {
+        const user = req.user;
+        if (!user) {
+            throw new ApiError(401, "Authorization Failed!");
+        }
+    
+        const BusinessId = user.BusinessId;
+    
+        // Validate bill number
+        if (!billNo) {
+            throw new ApiError(400, "Bill number is required!");
+        }
+    
+        // Find the bill and populate all required details
+        const bill = await Bill.findOne({ BusinessId, billNo })
+            .populate({
+                path: "customer",
+                select: "customerName email mobileNo ntnNumber cnic customerRegion",
+            })
+            .populate({
+                path: "BusinessId",
+                select: "businessName businessRegion exemptedParagraph",
+                populate: {
+                    path: "owner",
+                    select: "mobileno email",
                 },
-                {
-                    path: "typeId",
-                    select: "typeName",
-                },
-            ],
-        })
-        .lean(); // Convert Mongoose document to plain JS object for easier manipulation
-
-    if (!bill) {
-        throw new ApiError(404, `No bill found with the number ${billNo}`);
+            })
+            .populate({
+                path: "salesPerson",
+                select: "firstname lastname email role",
+            })
+            .populate({
+                path: "billItems.productId",
+                select: "productName productPack productUnit productPurchasePrice quantityUnit packUnit",
+                populate: [
+                    {
+                        path: "companyId",
+                        select: "companyName",
+                    },
+                    {
+                        path: "typeId",
+                        select: "typeName",
+                    },
+                ],
+            })
+            .lean(); // Convert Mongoose document to plain JS object for easier manipulation
+    
+        if (!bill) {
+            throw new ApiError(404, `No bill found with the number ${billNo}`);
+        }
+    
+        // Respond with the bill details
+        return res.status(200).json(
+            new ApiResponse(200, bill, "Bill retrieved successfully!")
+        );
+    } catch (error) {
+        new ApiError(500, error.message)
     }
-
-    // Respond with the bill details
-    return res.status(200).json(
-        new ApiResponse(200, bill, "Bill retrieved successfully!")
-    );
 });
 
 const billPayment = asyncHandler(async (req, res) => {
@@ -975,7 +979,7 @@ const billPayment = asyncHandler(async (req, res) => {
             );
         });
     } catch (error) {
-        throw new ApiError(500, `Transaction failed: ${error.message}`);
+        throw new ApiError(500, `${error.message}`);
     }
 });
 

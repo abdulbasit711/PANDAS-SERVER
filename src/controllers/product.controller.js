@@ -220,6 +220,8 @@ const registerProduct = asyncHandler(async (req, res) => {
         productDiscountPercentage,
         productPack,
         productUnit,
+        quantityUnit,
+        packUnit,
         productPurchasePrice,
         status,
         productTotalQuantity
@@ -312,7 +314,9 @@ const registerProduct = asyncHandler(async (req, res) => {
                 vendorCompanyId,
                 productDiscountPercentage,
                 productPack,
+                quantityUnit,
                 productUnit,
+                packUnit,
                 productPurchasePrice: purchasePrice,
                 status,
                 productTotalQuantity: productTotalQuantity * productPack
@@ -452,7 +456,7 @@ const deleteProduct = asyncHandler(async (req, res) => {
 const updateProduct = asyncHandler(async (req, res) => {
     const {
         productId, productCode, productName, categoryId, typeId, companyId,
-        productExpiryDate, productDiscountPercentage, productPack,
+        productExpiryDate, productDiscountPercentage, productPack, quantityUnit, packUnit,
         salePrice1, salePrice2, salePrice3, salePrice4,
         productPurchasePrice, productTotalQuantity
     } = req.body;
@@ -584,6 +588,8 @@ const updateProduct = asyncHandler(async (req, res) => {
             if (productExpiryDate && productExpiryDate !== oldProduct.productExpiryDate) updatedFields.productExpiryDate = productExpiryDate;
             if (productDiscountPercentage !== undefined && productDiscountPercentage !== oldProduct.productDiscountPercentage) updatedFields.productDiscountPercentage = productDiscountPercentage;
             if (productPack !== undefined && productPack !== oldProduct.productPack) updatedFields.productPack = productPack;
+            if (quantityUnit !== undefined && quantityUnit !== oldProduct.quantityUnit) updatedFields.quantityUnit = quantityUnit;
+            if (packUnit !== undefined && packUnit !== oldProduct.packUnit) updatedFields.packUnit = packUnit;
 
             if (Object.keys(updatedFields).length > 0) {
                 Object.assign(oldProduct, updatedFields);
@@ -597,7 +603,7 @@ const updateProduct = asyncHandler(async (req, res) => {
             return res.status(200).json(new ApiResponse(200, oldProduct, "Product updated successfully"));
         });
     } catch (error) {
-        throw new ApiError(500, `Transaction failed: ${error.message}`);
+        throw new ApiError(500, `${error.message}`);
     }
 });
 
@@ -714,6 +720,8 @@ const getProducts = asyncHandler(async (req, res) => {
                 productExpiryDate: 1,
                 productDiscountPercentage: 1,
                 productPack: 1,
+                quantityUnit: 1,
+                packUnit: 1,
                 productPurchasePrice: 1,
                 status: 1,
                 productTotalQuantity: 1,

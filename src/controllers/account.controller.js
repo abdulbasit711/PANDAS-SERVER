@@ -166,7 +166,7 @@ const getAccounts = asyncHandler(async (req, res) => {
             .json(new ApiResponse(200, accounts, "Accounts fetched successfully"));
     } catch (error) {
         console.error("Error fetching accounts:", error);
-        throw new ApiError(500, "Failed to retrieve accounts.")
+        throw new ApiError(500, `Failed to retrieve accounts. ${error.message}`)
     }
 });
 
@@ -260,61 +260,65 @@ const registerIndividualAccount = asyncHandler(async (req, res) => {
     } = req.body;
 
     // Check for required fields
-    if (!individualAccountName || !parentSubCategory) {
-        throw new ApiError(400, "Required fields missing!");
+    try {
+        if (!individualAccountName || !parentSubCategory) {
+            throw new ApiError(400, "Required fields missing!");
+        }
+
+        if (
+            (customerId && supplierId)
+            || (customerId && companyId)
+            || (supplierId && companyId)
+            || (customerId && supplierId && companyId)
+        ) {
+            throw new ApiError(400, "Only one of customerId, supplierId or companyId should be provided!");
+        }
+
+        const user = req.user;
+
+        if (!user) {
+            throw new ApiError(401, "Authorization Failed!");
+        }
+
+        const BusinessId = user.BusinessId;
+
+        const accountExists = await IndividualAccount.findOne({
+            BusinessId,
+            individualAccountName
+        });
+
+        if (accountExists) {
+            throw new ApiError(409, "Account already exists!");
+        }
+
+        const individualAccount = await IndividualAccount.create({
+            BusinessId,
+            individualAccountName,
+            accountBalance: accountBalance || 0,
+            parentAccount: parentSubCategory,
+            customerId: customerId || null,
+            supplierId: supplierId || null,
+            companyId: companyId || null,
+            mergedInto: null
+        });
+
+        if (!individualAccount) {
+            throw new ApiError(500, "Failed to create Individual Account! Something went wrong.");
+        }
+
+        const createdAccount = await IndividualAccount.findById(individualAccount._id)
+            .populate('BusinessId', 'businessName')
+            .populate('parentAccount', 'accountName')
+            .populate('customerId', 'customerName')
+            .populate('supplierId', 'supplierName')
+            .populate('companyId', 'companyName');
+
+        return res.status(201).json(
+            new ApiResponse(201, createdAccount, "Individual Account created successfully")
+        );
+    } catch (error) {
+        throw new ApiError(500, error.message)
     }
-
-    if (
-        (customerId && supplierId)
-        || (customerId && companyId)
-        || (supplierId && companyId)
-        || (customerId && supplierId && companyId)
-    ) {
-        throw new ApiError(400, "Only one of customerId, supplierId or companyId should be provided!");
-    }
-
-    const user = req.user;
-
-    if (!user) {
-        throw new ApiError(401, "Authorization Failed!");
-    }
-
-    const BusinessId = user.BusinessId;
-
-    const accountExists = await IndividualAccount.findOne({
-        BusinessId,
-        individualAccountName
-    });
-
-    if (accountExists) {
-        throw new ApiError(409, "Account already exists!");
-    }
-
-    const individualAccount = await IndividualAccount.create({
-        BusinessId,
-        individualAccountName,
-        accountBalance: accountBalance || 0,
-        parentAccount: parentSubCategory,
-        customerId: customerId || null,
-        supplierId: supplierId || null,
-        companyId: companyId || null,
-        mergedInto: null
-    });
-
-    if (!individualAccount) {
-        throw new ApiError(500, "Failed to create Individual Account! Something went wrong.");
-    }
-
-    const createdAccount = await IndividualAccount.findById(individualAccount._id)
-        .populate('BusinessId', 'businessName')
-        .populate('parentAccount', 'accountName')
-        .populate('customerId', 'customerName')
-        .populate('supplierId', 'supplierName')
-        .populate('companyId', 'companyName');
-
-    return res.status(201).json(
-        new ApiResponse(201, createdAccount, "Individual Account created successfully")
-    );
 });
 
 
@@ -331,63 +335,67 @@ const updateIndividualAccount = asyncHandler(async (req, res) => {
 
     const user = req.user;
 
-    if (!user) {
-        throw new ApiError(401, "Authorization Failed!");
-    }
-
-    const BusinessId = user.BusinessId;
-
-    if (
-        (customerId && supplierId)
-        || (customerId && companyId)
-        || (supplierId && companyId)
-        || (customerId && supplierId && companyId)
-    ) {
-        throw new ApiError(400, "Only one of customer, supplier or company should be provided!");
-    }
-
-
-    // Validate the account ID
-    const account = await IndividualAccount.findOne({ _id: individualAccountId, BusinessId });
-
-    if (!account) {
-        throw new ApiError(404, "Account not found or you don't have permission to update this account.");
-    }
-
-    // Check if the new name is already taken (if updating name)
-    if (individualAccountName && individualAccountName !== account.individualAccountName) {
-        const duplicateAccount = await IndividualAccount.findOne({
-            BusinessId,
-            individualAccountName
-        });
-
-        if (duplicateAccount) {
-            throw new ApiError(409, "An account with this name already exists!");
+    try {
+        if (!user) {
+            throw new ApiError(401, "Authorization Failed!");
         }
+
+        const BusinessId = user.BusinessId;
+
+        if (
+            (customerId && supplierId)
+            || (customerId && companyId)
+            || (supplierId && companyId)
+            || (customerId && supplierId && companyId)
+        ) {
+            throw new ApiError(400, "Only one of customer, supplier or company should be provided!");
+        }
+
+
+        // Validate the account ID
+        const account = await IndividualAccount.findOne({ _id: individualAccountId, BusinessId });
+
+        if (!account) {
+            throw new ApiError(404, "Account not found or you don't have permission to update this account.");
+        }
+
+        // Check if the new name is already taken (if updating name)
+        if (individualAccountName && individualAccountName !== account.individualAccountName) {
+            const duplicateAccount = await IndividualAccount.findOne({
+                BusinessId,
+                individualAccountName
+            });
+
+            if (duplicateAccount) {
+                throw new ApiError(409, "An account with this name already exists!");
+            }
+        }
+
+        // Update fields if provided in the request body
+        account.individualAccountName = individualAccountName || account.individualAccountName;
+        account.parentAccount = parentSubCategory || account.parentAccount;
+        account.customerId = customerId || account.customerId;
+        account.supplierId = supplierId || account.supplierId;
+        account.companyId = companyId || account.companyId;
+        account.accountBalance = accountBalance !== undefined ? accountBalance : account.accountBalance;
+
+        // Save the updated account
+        const updatedAccount = await account.save();
+
+        // Fetch the updated account with populated details
+        const populatedAccount = await IndividualAccount.findById(updatedAccount._id)
+            .populate('BusinessId', 'businessName')
+            .populate('parentAccount', 'accountName')
+            .populate('customerId', 'customerName')
+            .populate('supplierId', 'supplierName')
+            .populate('companyId', 'companyName');
+
+        return res.status(200).json(
+            new ApiResponse(200, populatedAccount, "Account updated successfully")
+        );
+    } catch (error) {
+        throw new ApiError(500, error.message)
     }
-
-    // Update fields if provided in the request body
-    account.individualAccountName = individualAccountName || account.individualAccountName;
-    account.parentAccount = parentSubCategory || account.parentAccount;
-    account.customerId = customerId || account.customerId;
-    account.supplierId = supplierId || account.supplierId;
-    account.companyId = companyId || account.companyId;
-    account.accountBalance = accountBalance !== undefined ? accountBalance : account.accountBalance;
-
-    // Save the updated account
-    const updatedAccount = await account.save();
-
-    // Fetch the updated account with populated details
-    const populatedAccount = await IndividualAccount.findById(updatedAccount._id)
-        .populate('BusinessId', 'businessName')
-        .populate('parentAccount', 'accountName')
-        .populate('customerId', 'customerName')
-        .populate('supplierId', 'supplierName')
-        .populate('companyId', 'companyName');
-
-    return res.status(200).json(
-        new ApiResponse(200, populatedAccount, "Account updated successfully")
-    );
 });
 
 const getAccountReceivables = asyncHandler(async (req, res) => {
@@ -488,7 +496,7 @@ const getAccountReceivables = asyncHandler(async (req, res) => {
             .json(new ApiResponse(200, accountReceivables, 'Active account receivables fetched successfully.'));
     } catch (error) {
         console.error('Error fetching active account receivables:', error);
-        throw new ApiError(500, error);
+        throw new ApiError(500, error.message);
     }
 });
 
@@ -515,7 +523,7 @@ const getIndividualAccounts = asyncHandler(async (req, res) => {
             .json(new ApiResponse(200, accounts, "Accounts fetched successfully"));
     } catch (error) {
         console.error("Error fetching accounts:", error);
-        throw new ApiError(500, "Failed to retrieve accounts.")
+        throw new ApiError(500, `Failed to retrieve accounts. ${error.message}`)
     }
 });
 
@@ -570,7 +578,7 @@ const postExpense = asyncHandler(async (req, res) => {
         });
 
     } catch (error) {
-        throw new ApiError(500, `Transaction failed: ${error.message}`);
+        throw new ApiError(500, `${error.message}`);
     }
 });
 
@@ -636,7 +644,7 @@ const postVendorJournalEntry = asyncHandler(async (req, res) => {
             const originalCashBalance = cashAccount.accountBalance;
             const originalPayablesBalance = accountPayables.accountBalance;
             let originalParentBalance;
-            if(parentAccount) {
+            if (parentAccount) {
                 originalParentBalance = parentAccount?.accountBalance
             }
 
@@ -747,7 +755,7 @@ const postCustomerJournalEntry = asyncHandler(async (req, res) => {
             const originalCashBalance = cashAccount.accountBalance;
             const originalReceivablesBalance = accountReceivables.accountBalance;
             let originalParentBalance;
-            if(parentAccount) {
+            if (parentAccount) {
                 originalParentBalance = parentAccount?.accountBalance
             }
 
@@ -954,7 +962,7 @@ const mergeAccounts = asyncHandler(async (req, res) => {
                 if (!parentAccount) {
                     throw new ApiError(404, "Existing parent account not found!");
                 }
-                
+
                 // Update parent account balance
                 parentAccount.accountBalance += accountBalance;
                 await parentAccount.save();
@@ -1055,7 +1063,7 @@ const openAccountBalance = asyncHandler(async (req, res) => {
         });
 
     } catch (error) {
-        throw new ApiError(500, `Transaction failed: ${error.message}`);
+        throw new ApiError(500, `${error.message}`);
     }
 });
 
@@ -1098,10 +1106,10 @@ const closeAccountBalance = asyncHandler(async (req, res) => {
                 }).sort({ createdAt: 1 }); // Sort from oldest to newest
             }
             console.log("ledgerEntries: ", ledgerEntries)
-            
+
             let totalDebit = 0;
             let totalCredit = 0;
-            
+
             ledgerEntries.forEach(entry => {
                 if (entry.debit) {
                     totalDebit += entry.debit;
@@ -1112,9 +1120,9 @@ const closeAccountBalance = asyncHandler(async (req, res) => {
             });
             console.log("total debit: ", totalDebit)
             console.log("total credit: ", totalCredit)
-            
+
             let closingBalance = totalDebit - totalCredit;
-            
+
             console.log("Closing balance: ", closingBalance)
             let isDebit = closingBalance > 0;
 
@@ -1165,7 +1173,7 @@ const closeAccountBalance = asyncHandler(async (req, res) => {
             res.status(200).json(new ApiResponse(200, { closingEntry, openingEntry }, "Account balance closed successfully!"));
         });
     } catch (error) {
-        throw new ApiError(500, `Transaction failed: ${error.message}`);
+        throw new ApiError(500, `${error.message}`);
     }
 });
 
@@ -1322,8 +1330,8 @@ const getPreviousBalance = asyncHandler(async (req, res) => {
             }
 
             res.status(200).json(
-                new ApiResponse(200, { 
-                    accountBalance: individualAccount.accountBalance 
+                new ApiResponse(200, {
+                    accountBalance: individualAccount.accountBalance
                 }, "Previous balance retrieved successfully!")
             );
         });
