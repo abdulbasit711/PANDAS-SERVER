@@ -848,6 +848,45 @@ const allProductsWithoutBarcode = asyncHandler(async (req, res) => {
 })
 
 
+const getExpiryReport = asyncHandler(async (req, res) => {
+    try {
+        const user = req.user;
+
+        if (!user) {
+            throw new ApiError(401, "Authorization Failed!");
+        }
+
+        const BusinessId = user.BusinessId;
+
+        // Optional: allow filtering by days until expiry
+        const days = parseInt(req.query.days || "30", 10);
+        const today = new Date();
+        const futureDate = new Date();
+        futureDate.setDate(today.getDate() + days);
+
+        // Find all products that have an expiry date within the next X days
+        const expiringProducts = await Product.find({
+            BusinessId,
+            productExpiryDate: {
+                $gte: today,
+                $lte: futureDate,
+            }
+        })
+        .populate("typeId", "typeName")
+        .populate("companyId", "companyName")
+        .sort({ productExpiryDate: 1 })
+        .lean();
+
+        return res.status(200).json(
+            new ApiResponse(200, expiringProducts, `Expiry report generated for next ${days} days`)
+        );
+    } catch (error) {
+        console.error("Expiry Report Error:", error);
+        throw new ApiError(500, error.message);
+    }
+});
+
+
 
 
 export {
@@ -863,5 +902,6 @@ export {
     getProducts,
     createBarcode,
     barcodePDF,
-    allProductsWithoutBarcode
+    allProductsWithoutBarcode,
+    getExpiryReport
 }
