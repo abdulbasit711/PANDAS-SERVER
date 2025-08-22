@@ -48,7 +48,6 @@ const getDashboardData = asyncHandler(async (req, res) => {
         startDate.setMonth(now.getMonth() - 1);
     }
 
-
     let groupFormat = "%Y-%m-%d"; // default: daily
 
     switch (filter) {
@@ -63,11 +62,11 @@ const getDashboardData = asyncHandler(async (req, res) => {
         groupFormat = "%Y-%m";
         break;
       case 'yearly':
-        groupFormat = "%Y"; // or "%Y" for full-year
+        groupFormat = "%Y";
         break;
     }
 
-
+    // Sales + Revenue aggregation
     const salesData = await Bill.aggregate([
       {
         $match: {
@@ -80,7 +79,8 @@ const getDashboardData = asyncHandler(async (req, res) => {
           _id: {
             $dateToString: { format: groupFormat, date: "$createdAt" }
           },
-          totalSales: { $sum: "$totalAmount" }
+          totalSales: { $sum: "$totalAmount" },
+          totalRevenue: { $sum: "$billRevenue" }
         }
       },
       {
@@ -88,7 +88,7 @@ const getDashboardData = asyncHandler(async (req, res) => {
       }
     ]);
 
-    // Fix: consistent group format for purchases
+    // Purchases aggregation
     const purchaseData = await Purchase.aggregate([
       {
         $match: {
@@ -112,11 +112,16 @@ const getDashboardData = asyncHandler(async (req, res) => {
       },
     ]);
 
-    // Fix: normalize and merge
+    // Normalize & merge sales + purchases
     const salesMap = new Map(
       salesData.map(item => [
         item._id,
-        { date: item._id, sales: item.totalSales, purchases: 0 }
+        {
+          date: item._id,
+          sales: item.totalSales,
+          revenue: item.totalRevenue,
+          purchases: 0
+        }
       ])
     );
 
@@ -124,7 +129,12 @@ const getDashboardData = asyncHandler(async (req, res) => {
       if (salesMap.has(p.date)) {
         salesMap.get(p.date).purchases = p.purchases;
       } else {
-        salesMap.set(p.date, { date: p.date, sales: 0, purchases: p.purchases });
+        salesMap.set(p.date, {
+          date: p.date,
+          sales: 0,
+          revenue: 0,
+          purchases: p.purchases
+        });
       }
     });
 
@@ -163,7 +173,7 @@ const getDashboardData = asyncHandler(async (req, res) => {
       { $unwind: "$billItems" },
       {
         $group: {
-          _id: "$billItems.productId", // group by productId
+          _id: "$billItems.productId",
           totalQuantity: { $sum: "$billItems.quantity" },
         },
       },
@@ -176,9 +186,7 @@ const getDashboardData = asyncHandler(async (req, res) => {
           as: "productDetails",
         },
       },
-      {
-        $unwind: "$productDetails",
-      },
+      { $unwind: "$productDetails" },
       {
         $project: {
           _id: 0,
@@ -188,31 +196,19 @@ const getDashboardData = asyncHandler(async (req, res) => {
       },
     ]);
 
-    const stockData = await Product.find({ BusinessId })
-      .sort({ productTotalQuantity: -1 }) // highest quantity first
-      .limit(10)
-      .select("productName productTotalQuantity productCode");
-
-    // console.log('stockData', stockData)
-
-
-    // console.log('soldProducts', soldProducts)
+    const stockData = soldProducts.slice(0, 15);
 
     const topProduct = soldProducts[0] || "No data";
     const leastProduct = soldProducts[soldProducts.length - 1] || "No data";
 
-    // Out of stock products
     const outOfStockProducts = await Product.find({
       BusinessId,
       productTotalQuantity: { $lte: 0 },
     }).select("productName");
 
-
-
+    // Totals
     const totalSales = finalSalesData.reduce((acc, item) => acc + (item.sales || 0), 0);
-
-    const totalRevenue = (totalSales * 0.2).toFixed(2);
-
+    const totalRevenue = finalSalesData.reduce((acc, item) => acc + (item.revenue || 0), 0);
     const avgSales = finalSalesData.length > 0 ? (totalSales / finalSalesData.length).toFixed(2) : "0.00";
 
     return res.status(200).json(
@@ -237,6 +233,7 @@ const getDashboardData = asyncHandler(async (req, res) => {
     throw new ApiError(500, "Failed to retrieve dashboard data.");
   }
 });
+
 
 
 export { getDashboardData };

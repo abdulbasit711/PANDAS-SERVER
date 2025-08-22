@@ -99,6 +99,9 @@ const BillSchema = new Schema({
     totalPurchaseAmount: {
         type: Number
     },
+    billRevenue: {
+        type: Number
+    },
     mergedInto: {
         type: Schema.Types.ObjectId,
         ref: 'Bill',

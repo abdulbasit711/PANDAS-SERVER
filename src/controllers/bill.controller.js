@@ -85,11 +85,11 @@ const registerBill = asyncHandler(async (req, res) => {
             let productName = "";
 
             for (const item of billItems) {
-                const { productId, quantity, billItemUnit } = item;
+                const { productId, quantity, billItemPack } = item;
 
                 console.log('item', item)
 
-                const purchaseCost = await Product.allocatePurchasePrice(productId, quantity, billItemUnit, transaction);
+                const purchaseCost = await Product.allocatePurchasePrice(productId, quantity, billItemPack, transaction);
                 if (typeof purchaseCost !== "number" || isNaN(purchaseCost)) {
                     console.log('purchaseCost', purchaseCost)
                     console.log(typeof (purchaseCost))
@@ -105,7 +105,8 @@ const registerBill = asyncHandler(async (req, res) => {
                 productName = product.productName;
 
                 const originalProductQuantity = product.productTotalQuantity; // Capture original value for rollback
-                product.productTotalQuantity -= (quantity * billItemUnit);
+                product.productTotalQuantity -= (quantity * billItemPack);
+                console.log('quantity, billItemPack', quantity, billItemPack)
 
                 // if (product.productTotalQuantity < 0) {
                 //     throw new ApiError(400, `Insufficient stock for product: ${product.productName}`);
@@ -228,6 +229,7 @@ const registerBill = asyncHandler(async (req, res) => {
                     paidAmount,
                     dueDate,
                     totalPurchaseAmount,
+                    billRevenue: salesRevenue,
                     extraItems
 
                 },
