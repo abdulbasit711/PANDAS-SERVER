@@ -79,7 +79,9 @@ const getDashboardData = asyncHandler(async (req, res) => {
           _id: {
             $dateToString: { format: groupFormat, date: "$createdAt" }
           },
-          totalSales: { $sum: "$totalAmount" },
+          totalSales: {
+            $sum: { $subtract: ["$totalAmount", "$flatDiscount"] }
+          },
           totalRevenue: { $sum: "$billRevenue" }
         }
       },

@@ -9,6 +9,7 @@ import { AccountReceivable } from "../models/accounts/accountsReceivables.model.
 import { GeneralLedger } from "../models/accounts/generalLedger.model.js";
 import { TransactionManager } from "../utils/TransactionManager.js";
 import { Product } from "../models/product/product.model.js"
+import { Bill } from "../models/bills/bill.model.js";
 
 const registerAccount = asyncHandler(async (req, res) => {
 
@@ -1341,6 +1342,122 @@ const getPreviousBalance = asyncHandler(async (req, res) => {
 });
 
 
+const getIncomeStatement = asyncHandler(async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query; // user provides custom range
+        const user = req.user;
+
+        if (!user?.BusinessId) {
+            throw new ApiError(401, "Unauthorized or missing BusinessId");
+        }
+        console.log('startDate, EndDate', startDate, endDate)
+        console.log('Query: ', req.query)
+
+        const BusinessId = new mongoose.Types.ObjectId(user.BusinessId);
+
+        // Build date filter (optional)
+        let dateFilter = {};
+        if (startDate && endDate) {
+            dateFilter = { 
+                $gt: new Date(new Date(startDate).setHours(0,0,0,0)), 
+                $lte: new Date(new Date(endDate).setHours(23,59,59,999)) 
+            };
+        }
+
+        // 1. Get Sales Revenue
+        const salesAgg = await Bill.aggregate([
+            {
+                $match: {
+                    BusinessId,
+                    ...(startDate && endDate ? { createdAt: dateFilter } : {})
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    totalRevenue: { $sum: "$billRevenue" }
+                }
+            }
+        ]);
+        const totalRevenue = salesAgg[0]?.totalRevenue || 0;
+
+        // 2. Get Expense Accounts (list)
+        const expenseAccounts = await IndividualAccount.aggregate([
+            {
+                $lookup: {
+                    from: "accountsubcategories",
+                    localField: "parentAccount",
+                    foreignField: "_id",
+                    as: "subCategory"
+                }
+            },
+            { $unwind: "$subCategory" },
+            {
+                $match: {
+                    BusinessId,
+                    "subCategory.accountSubCategoryName": "Expense"
+                }
+            },
+            {
+                $project: {
+                    _id: 1,
+                    accountName: "$individualAccountName"
+                }
+            }
+        ]);
+
+        const expenseAccountIds = expenseAccounts.map(acc => acc._id);
+
+        // 3. Get Expenses grouped by each expense account
+        const expenseAgg = await GeneralLedger.aggregate([
+            {
+                $match: {
+                    BusinessId,
+                    individualAccountId: { $in: expenseAccountIds },
+                    ...(startDate && endDate ? { createdAt: dateFilter } : {})
+                }
+            },
+            {
+                $group: {
+                    _id: "$individualAccountId",
+                    totalExpense: { $sum: "$debit" }
+                }
+            }
+        ]);
+
+        // 4. Map back account names
+        const expenseMap = expenseAccounts.reduce((acc, account) => {
+            acc[account._id.toString()] = account.accountName;
+            return acc;
+        }, {});
+
+        const expensesDetailed = expenseAgg.map(item => ({
+            accountId: item._id,
+            accountName: expenseMap[item._id.toString()] || "Unknown Account",
+            totalExpense: item.totalExpense
+        }));
+
+        const totalExpenses = expensesDetailed.reduce((sum, e) => sum + e.totalExpense, 0);
+
+        // 5. Net Profit
+        const netProfit = totalRevenue - totalExpenses;
+
+        return res.status(200).json(
+            new ApiResponse(200, {
+                revenue: totalRevenue,
+                expenses: expensesDetailed,
+                totalExpenses,
+                netProfit
+            }, "Income Statement generated successfully")
+        );
+
+    } catch (error) {
+        console.error("Error generating income statement:", error);
+        throw new ApiError(500, error.message);
+    }
+});
+
+
 
 
 export {
@@ -1362,5 +1479,6 @@ export {
     closeAccountBalance,
     adjustAccountBalance,
     getTotalInventory,
-    getPreviousBalance
+    getPreviousBalance,
+    getIncomeStatement
 }
