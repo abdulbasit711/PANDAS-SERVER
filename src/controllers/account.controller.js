@@ -413,6 +413,102 @@ const getAccountReceivables = asyncHandler(async (req, res) => {
             throw new ApiError(400, 'BusinessId is missing in the request.');
         }
 
+        const customerAccounts = await IndividualAccount.find({
+            BusinessId,
+            customerId: { $exists: true, $ne: null }
+        }).select("_id individualAccountName customerId");
+
+        if (!customerAccounts.length)
+            return res
+                .status(404)
+                .json(new ApiResponse(404, [], "No customer accounts found."));
+
+        const customerAccountIds = customerAccounts.map(acc => acc._id);
+
+        // Step 2: fetch all general ledger entries related to these accounts
+        const ledgers = await GeneralLedger.aggregate([
+            {
+                $match: {
+                    BusinessId: new mongoose.Types.ObjectId(BusinessId),
+                    reference: { $in: customerAccountIds },
+                },
+            },
+            {
+                $lookup: {
+                    from: "individualaccounts",
+                    localField: "reference",
+                    foreignField: "_id",
+                    as: "account",
+                    pipeline: [
+                        {
+                            $lookup: {
+                                from: "customers",
+                                localField: "customerId",
+                                foreignField: "_id",
+                                as: "customer",
+                                pipeline: [
+                                    {
+                                        $project: {
+                                            customerName: 1,
+                                            mobileNo: 1,
+                                            customerRegion: 1,
+                                            customerFlag: 1,
+                                        },
+                                    },
+                                ],
+                            },
+                        },
+                        { $addFields: { customer: { $first: "$customer" } } },
+                    ],
+                },
+            },
+            { $addFields: { account: { $first: "$account" } } },
+            {
+                $sort: { createdAt: 1 } // earliest first to detect Opening Balance properly
+            }
+        ]);
+
+        console.log('ledgers', ledgers.length)
+
+        // Step 3: compute each account’s balance from Opening Balance onwards
+        const accountBalances = {};
+        for (const entry of ledgers) {
+            const accId = entry.individualAccountId.toString();
+            const debit = entry.debit || 0;
+            const credit = entry.credit || 0;
+
+            if (!accountBalances[accId]) {
+                accountBalances[accId] = {
+                    balance: 0,
+                    customer: entry.account.customer,
+                };
+            }
+
+            // If it's the opening balance, initialize it properly
+            if (entry.details === "Opening Balance") {
+                accountBalances[accId].balance = debit - credit;
+            } else {
+                // Continue calculating based on normal debit/credit
+                accountBalances[accId].balance += debit - credit;
+            }
+        }
+        
+
+        // Step 4: calculate total receivables across all customer accounts
+        let totalReceivables = 0;
+        const perCustomerBalances = [];
+
+        for (const accId in accountBalances) {
+            const balance = accountBalances[accId].balance;
+            const customer = accountBalances[accId].customer;
+            totalReceivables += balance > 0 ? balance : 0; // only positive balances are receivables
+            perCustomerBalances.push({
+                customerName: customer?.customerName || "N/A",
+                customerRegion: customer?.customerRegion || "N/A",
+                receivableAmount: balance,
+            });
+        }
+
         const accountReceivables = await AccountReceivable.aggregate([
             {
                 $match: {
@@ -494,7 +590,11 @@ const getAccountReceivables = asyncHandler(async (req, res) => {
 
         return res
             .status(200)
-            .json(new ApiResponse(200, accountReceivables, 'Active account receivables fetched successfully.'));
+            .json(new ApiResponse(200, {
+                accountReceivables,
+                totalReceivables,
+                perCustomerBalances,
+            }, 'Active account receivables fetched successfully.'));
     } catch (error) {
         console.error('Error fetching active account receivables:', error);
         throw new ApiError(500, error.message);
@@ -1242,52 +1342,42 @@ const adjustAccountBalance = asyncHandler(async (req, res) => {
 
 const getTotalInventory = asyncHandler(async (req, res) => {
     const user = req.user;
-
-    if (!user) {
-        throw new ApiError(401, "Authorization Failed!");
-    }
-
+    if (!user) throw new ApiError(401, "Authorization Failed!");
 
     const BusinessId = user.BusinessId;
-    const transactionManager = new TransactionManager();
 
     try {
-        await transactionManager.run(async (transaction) => {
+        const products = await Product.find({ BusinessId });
 
-            // Aggregate all products and calculate the sum of (productPurchasePrice * productTotalQuantity)
-            const inventoryValueResult = await Product.aggregate([
-                {
-                    $project: {
-                        _id: 1,
-                        purchaseValueOfPacks: {
-                            $cond: {
-                                if: { $eq: ['$productPack', 0] },
-                                then: 0, // If productPack is 0, the value contribution is 0
-                                else: {
-                                    $multiply: [
-                                        '$productPurchasePrice',
-                                        { $divide: ['$productTotalQuantity', '$productPack'] },
-                                    ],
-                                },
-                            },
-                        },
-                    },
-                },
-                {
-                    $group: {
-                        _id: null,
-                        totalInventoryValueOfPacks: { $sum: '$purchaseValueOfPacks' },
-                    },
-                },
-            ]);
+        let totalInventoryValue = 0;
 
-            let totalInventoryValue = 0;
-            if (inventoryValueResult.length > 0) {
-                totalInventoryValue = inventoryValueResult[0].totalInventoryValueOfPacks;
-            }
+        products.forEach(product => {
+            const { productName, productTotalQuantity, productPack, productPurchasePrice } = product;
 
-            res.status(200).json(new ApiResponse(200, { totalInventoryValue }, "Inventory details fetched successfully!"));
+            // avoid divide by zero
+            const packs = productPack && productPack > 0
+                ? productTotalQuantity / productPack
+                : 0;
+
+            const purchaseValue = packs * productPurchasePrice;
+
+            console.log(`
+        Product: ${productName}
+        Total Quantity: ${productTotalQuantity}
+        Pack Size: ${productPack}
+        Purchase Price (per pack): ${productPurchasePrice}
+        Packs: ${packs}
+        Purchase Value: ${purchaseValue}
+      `);
+
+            totalInventoryValue += purchaseValue;
         });
+
+        console.log("TOTAL INVENTORY VALUE:", totalInventoryValue);
+
+        res.status(200).json(
+            new ApiResponse(200, { totalInventoryValue }, "Inventory details fetched successfully!")
+        );
     } catch (error) {
         throw new ApiError(500, `${error.message}`);
     }
@@ -1358,9 +1448,9 @@ const getIncomeStatement = asyncHandler(async (req, res) => {
         // Build date filter (optional)
         let dateFilter = {};
         if (startDate && endDate) {
-            dateFilter = { 
-                $gt: new Date(new Date(startDate).setHours(0,0,0,0)), 
-                $lte: new Date(new Date(endDate).setHours(23,59,59,999)) 
+            dateFilter = {
+                $gt: new Date(new Date(startDate).setHours(0, 0, 0, 0)),
+                $lte: new Date(new Date(endDate).setHours(23, 59, 59, 999))
             };
         }
 

@@ -23,6 +23,14 @@ const registerCustomer = asyncHandler(async (req, res) => {
     const BusinessId = user.BusinessId;
     const accountSubCategoryName = "Current Asset";
 
+    // console.log('mobileNo', mobileNo)
+    if (mobileNo) {
+        const existingCustomer = await Customer.findOne({ BusinessId, mobileNo });
+        if (existingCustomer) {
+            throw new ApiError(409, `This mobile number is already registered with ${existingCustomer?.customerName}`);
+        }
+    }
+
     const transactionManager = new TransactionManager();
 
     try {
@@ -108,6 +116,17 @@ const updateCustomerDetails = asyncHandler(async (req, res) => {
                 throw new ApiError(404, "Customer not found or does not belong to your business!");
             }
 
+            if (updatedDetails.mobileNo) {
+                const existing = await Customer.findOne({
+                    BusinessId: user.BusinessId,
+                    mobileNo: updatedDetails.mobileNo,
+                    _id: { $ne: customerId }
+                });
+                if (existing) {
+                    throw new ApiError(409, `This mobile number is already assigned to ${existing.customerName}`);
+                }
+            }
+
             // Store previous values for rollback
             const previousDetails = {};
             Object.keys(updatedDetails).forEach((key) => {
@@ -136,38 +155,38 @@ const updateCustomerDetails = asyncHandler(async (req, res) => {
 
 
 // Controller to get customers
-const getAllCustomers = asyncHandler( async (req, res) => {
-  try {
-    const { BusinessId } = req.user;
+const getAllCustomers = asyncHandler(async (req, res) => {
+    try {
+        const { BusinessId } = req.user;
 
 
 
-    if (!BusinessId) {
-      return res.status(400).json({
-        success: false,
-        message: 'BusinessId is missing in the request.',
-      });
+        if (!BusinessId) {
+            return res.status(400).json({
+                success: false,
+                message: 'BusinessId is missing in the request.',
+            });
+        }
+
+        // Fetch customers for the specified BusinessId
+        const customers = await Customer.find({ BusinessId });
+
+        // Return the customers with a success message
+        return res.status(200).json({
+            success: true,
+            message: 'Customers retrieved successfully.',
+            data: customers,
+        });
+    } catch (error) {
+        console.error('Error fetching customers:', error);
+
+        // Return an error response
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to retrieve customers.',
+            error: error.message,
+        });
     }
-
-    // Fetch customers for the specified BusinessId
-    const customers = await Customer.find({ BusinessId });
-
-    // Return the customers with a success message
-    return res.status(200).json({
-      success: true,
-      message: 'Customers retrieved successfully.',
-      data: customers,
-    });
-  } catch (error) {
-    console.error('Error fetching customers:', error);
-
-    // Return an error response
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to retrieve customers.',
-      error: error.message,
-    });
-  }
 })
 
 

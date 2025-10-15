@@ -43,7 +43,7 @@ const registerBill = asyncHandler(async (req, res) => {
 
             const BusinessId = user.BusinessId;
 
-            if (!billType || !billItems || !billItems.length || !totalAmount) {
+            if (!billType || !totalAmount) {
                 throw new ApiError(400, "Required fields are missing!");
             }
 
@@ -85,13 +85,13 @@ const registerBill = asyncHandler(async (req, res) => {
             let productName = "";
 
             for (const item of billItems) {
-                const { productId, quantity, billItemPack } = item;
+                const { productId, quantity, billItemUnit, billItemPack } = item;
 
-                console.log('item', item)
+                // console.log('item', item)
 
-                const purchaseCost = await Product.allocatePurchasePrice(productId, quantity, billItemPack, transaction);
+                const purchaseCost = await Product.allocatePurchasePrice(productId, quantity, billItemPack, billItemUnit, transaction);
                 if (typeof purchaseCost !== "number" || isNaN(purchaseCost)) {
-                    console.log('purchaseCost', purchaseCost)
+                    // console.log('purchaseCost', purchaseCost)
                     console.log(typeof (purchaseCost))
                     throw new Error(`Invalid purchase cost calculated for product ID ${productId}`);
                 }
@@ -105,8 +105,8 @@ const registerBill = asyncHandler(async (req, res) => {
                 productName = product.productName;
 
                 const originalProductQuantity = product.productTotalQuantity; // Capture original value for rollback
-                product.productTotalQuantity -= (quantity * billItemPack);
-                console.log('quantity, billItemPack', quantity, billItemPack)
+                product.productTotalQuantity -= (quantity * billItemPack + billItemUnit);
+                // console.log('quantity, billItemPack', quantity, billItemPack)
 
                 // if (product.productTotalQuantity < 0) {
                 //     throw new ApiError(400, `Insufficient stock for product: ${product.productName}`);
@@ -173,10 +173,19 @@ const registerBill = asyncHandler(async (req, res) => {
                 throw new ApiError(400, "Accounts Receivable account not found!");
             }
 
+            // console.log('extraItems', extraItems)
+            // console.log('first', Number(extraItems[0].salePrice))
+
+            const totalExtraItemsAmount = extraItems?.reduce(
+                (sum, item) => sum + (Number(item?.salePrice || 0) * Number(item?.quantity || 0)),
+                0
+            );
+            // console.log('totalExtraItemsAmount', totalExtraItemsAmount)
+
             const originalInventoryBalance = inventoryAccount.accountBalance;
             inventoryAccount.accountBalance -= totalPurchaseAmount;
 
-            const salesRevenue = totalAmount - flatDiscount - totalPurchaseAmount;
+            const salesRevenue = totalAmount - flatDiscount - totalPurchaseAmount - Number(totalExtraItemsAmount);
             const originalSalesRevenueBalance = salesRevenueAccount.accountBalance;
             salesRevenueAccount.accountBalance += salesRevenue;
 
@@ -261,15 +270,6 @@ const registerBill = asyncHandler(async (req, res) => {
                             debit: totalAmount - flatDiscount,
                             reference: customerIndividualAccount.mergedInto !== null ? customerIndividualAccount.mergedInto : customerIndividualAccount._id,
                         },
-                        paidAmount
-                            ? {
-                                BusinessId,
-                                individualAccountId: cashAccount._id,
-                                details: `Cash received`,
-                                credit: paidAmount,
-                                reference: customerIndividualAccount.mergedInto !== null ? customerIndividualAccount.mergedInto : customerIndividualAccount._id,
-                            }
-                            : null,
                         {
                             BusinessId,
                             individualAccountId: salesRevenueAccount._id,
@@ -277,6 +277,15 @@ const registerBill = asyncHandler(async (req, res) => {
                             credit: salesRevenue,
                             reference: customerIndividualAccount.mergedInto !== null ? customerIndividualAccount.mergedInto : customerIndividualAccount._id,
                         },
+                        paidAmount
+                            ? {
+                                BusinessId,
+                                individualAccountId: customerIndividualAccount.mergedInto !== null ? customerIndividualAccount.mergedInto : customerIndividualAccount._id,
+                                details: `Cash received`,
+                                credit: paidAmount,
+                                reference: customerIndividualAccount.mergedInto !== null ? customerIndividualAccount.mergedInto : customerIndividualAccount._id,
+                            }
+                            : null,
                     ].filter(Boolean)
                 );
             }
@@ -290,7 +299,7 @@ const registerBill = asyncHandler(async (req, res) => {
         });
 
     } catch (error) {
-        
+
         if (error instanceof ApiError) {
             throw error;
         }
@@ -373,7 +382,7 @@ const mergeBills = asyncHandler(async (req, res) => {
                 parentBill.flatDiscount += childBills.reduce((sum, b) => sum + (b.flatDiscount || 0), 0);
                 parentBill.totalPurchaseAmount += childBills.reduce((sum, b) => sum + (b.totalPurchaseAmount || 0), 0);
                 let remainingAmount = parentBill.totalAmount - parentBill.paidAmount - parentBill.flatDiscount
-                parentBill.billStatus = (remainingAmount) <= 0 ? 'paid' : (parentBill.paidAmount > 0 ? 'partiallypaid' : 'unpaid' )
+                parentBill.billStatus = (remainingAmount) <= 0 ? 'paid' : (parentBill.paidAmount > 0 ? 'partiallypaid' : 'unpaid')
                 parentBill.description = `Merged bill containing ${childBills.length + 1} bills`;
 
                 transaction.addOperation(
@@ -433,7 +442,7 @@ const mergeBills = asyncHandler(async (req, res) => {
                     billPaymentType: firstChildBill.billPaymentType,
                     billItems: allBillItems,
                     flatDiscount,
-                    billStatus: (remainingAmount) <= 0 ? 'paid' : (paidAmount > 0 ? 'partiallypaid' : 'unpaid' ),
+                    billStatus: (remainingAmount) <= 0 ? 'paid' : (paidAmount > 0 ? 'partiallypaid' : 'unpaid'),
                     totalAmount,
                     paidAmount,
                     totalPurchaseAmount,
@@ -451,10 +460,10 @@ const mergeBills = asyncHandler(async (req, res) => {
             // Update all child bills to point to the parent
             for (const childBill of childBills) {
                 const originalChildBill = { ...childBill.toObject() };
-                
+
                 childBill.mergedInto = parentBill._id;
                 childBill.description = `Bill merged into ${parentBill.billNo}`
-                
+
                 transaction.addOperation(
                     async () => await childBill.save(),
                     async () => {
@@ -467,7 +476,7 @@ const mergeBills = asyncHandler(async (req, res) => {
             }
 
 
-            res.status(200).json(new ApiResponse(200, { 
+            res.status(200).json(new ApiResponse(200, {
                 mergedBill: parentBill,
                 mergedCount: childBills.length
             }, "Bills merged successfully!"));
@@ -531,41 +540,109 @@ const updateBill = asyncHandler(async (req, res) => {
 
             const amountDifference = newTotalPurchaseAmount - oldTotalPurchaseAmount;
 
+            let changedItemsAmount = 0;
+
             // Inventory Update
             const processInventoryChanges = async (oldItems, newItems) => {
                 const oldItemsMap = new Map(oldItems.map((item) => [item.productId._id.toString(), item]));
                 const newItemsMap = new Map(newItems.map((item) => [item.productId._id.toString(), item]));
-                // console.log("1")
 
+                const StatusOfPrice = mongoose.model("StatusOfPrice");
+
+                
+
+                // Handle all new and existing items
                 for (const [productId, newItem] of newItemsMap) {
                     const oldItem = oldItemsMap.get(productId);
                     const oldQuantity = oldItem ? oldItem.quantity : 0;
                     const newQuantity = newItem.quantity;
-                    const quantityDifference = newQuantity - oldQuantity;
+                    const quantityDifference = oldQuantity - newQuantity;
 
                     if (quantityDifference !== 0) {
                         const product = await Product.findById(productId);
-                        if (!product) {
-                            throw new ApiError(404, `Product not found for ID: ${productId}`);
-                        }
+                        if (!product) throw new ApiError(404, `Product not found for ID: ${productId}`);
 
                         const originalProductQuantity = product.productTotalQuantity;
-                        product.productTotalQuantity -= quantityDifference;
+                        product.productTotalQuantity += (quantityDifference * product.productPack);
 
-                        if (product.productTotalQuantity < 0) {
+                        changedItemsAmount += quantityDifference * oldItem.billItemPrice
+
+                        if ((product.productTotalQuantity / product.productPack) < 0) {
                             throw new ApiError(400, `Insufficient stock for product: ${product.productName}`);
                         }
 
-                        transaction.addOperation(
-                            async () => await product.save(),
-                            async () => {
-                                product.productTotalQuantity = originalProductQuantity;
-                                await product.save();
-                            }
-                        );
+                        // Adjust the latest StatusOfPrice record
+                        const latestStatus = await StatusOfPrice.findOne({ productId }).sort({ createdAt: -1 });
+                        if (latestStatus) {
+                            const originalRemaining = latestStatus.remainingQuantity;
+                            latestStatus.remainingQuantity -= (quantityDifference * product.productPack);
+
+                            transaction.addOperation(
+                                async () => {
+                                    await latestStatus.save();
+                                    await product.save();
+                                },
+                                async () => {
+                                    latestStatus.remainingQuantity = originalRemaining;
+                                    product.productTotalQuantity = originalProductQuantity;
+                                    await latestStatus.save();
+                                    await product.save();
+                                }
+                            );
+                        } else {
+                            transaction.addOperation(
+                                async () => await product.save(),
+                                async () => {
+                                    product.productTotalQuantity = originalProductQuantity;
+                                    await product.save();
+                                }
+                            );
+                        }
                     }
                 }
-                // console.log("2")
+
+                // Handle deleted products (items in old bill but not in new one)
+                for (const [productId, oldItem] of oldItemsMap) {
+                    if (!newItemsMap.has(productId)) {
+                        const product = await Product.findById(productId);
+                        if (!product) throw new ApiError(404, `Product not found for ID: ${productId}`);
+
+                        const originalProductQuantity = product.productTotalQuantity;
+                        product.productTotalQuantity += (oldItem.quantity  * product.productPack);
+
+                        changedItemsAmount += oldItem.quantity * oldItem.billItemPrice;
+
+                        console.log('oldItem', oldItem)
+
+                        // Increase remaining quantity in the latest StatusOfPrice record
+                        const latestStatus = await StatusOfPrice.findOne({ productId }).sort({ createdAt: -1 });
+                        if (latestStatus) {
+                            const originalRemaining = latestStatus.remainingQuantity;
+                            latestStatus.remainingQuantity += (oldItem.quantity  * product.productPack);
+
+                            transaction.addOperation(
+                                async () => {
+                                    await latestStatus.save();
+                                    await product.save();
+                                },
+                                async () => {
+                                    latestStatus.remainingQuantity = originalRemaining;
+                                    product.productTotalQuantity = originalProductQuantity;
+                                    await latestStatus.save();
+                                    await product.save();
+                                }
+                            );
+                        } else {
+                            transaction.addOperation(
+                                async () => await product.save(),
+                                async () => {
+                                    product.productTotalQuantity = originalProductQuantity;
+                                    await product.save();
+                                }
+                            );
+                        }
+                    }
+                }
             };
 
             await processInventoryChanges(oldBillData.billItems, newBill.billItems);
@@ -678,6 +755,42 @@ const updateBill = asyncHandler(async (req, res) => {
                 await newCustomerAccount.save();
             }
 
+            if (newBill.customer && paidAmount !== oldBill.paidAmount) {
+                await GeneralLedger.create([
+                    {
+                        BusinessId,
+                        individualAccountId: oldCustomerAccount.mergedInto !== null ? oldCustomerAccount.mergedInto : oldCustomerAccount._id,
+                        details: `Cash Received for Bill ${newBill.billNo}`,
+                        credit: paidAmount - oldBill?.paidAmount,
+                        reference: oldCustomerAccount.mergedInto !== null ? oldCustomerAccount.mergedInto : oldCustomerAccount._id,
+                    },
+                ]);
+            }
+
+            if (newBill.customer && flatDiscount !== oldBill.flatDiscount) {
+                await GeneralLedger.create([
+                    {
+                        BusinessId,
+                        individualAccountId: oldCustomerAccount.mergedInto !== null ? oldCustomerAccount.mergedInto : oldCustomerAccount._id,
+                        details: `Flat Discount on Bill ${newBill.billNo}`,
+                        credit: flatDiscount - oldBill?.flatDiscount,
+                        reference: oldCustomerAccount.mergedInto !== null ? oldCustomerAccount.mergedInto : oldCustomerAccount._id,
+                    },
+                ]);
+            }
+
+            if (changedItemsAmount) {
+                await GeneralLedger.create([
+                    {
+                        BusinessId,
+                        individualAccountId: oldCustomerAccount.mergedInto !== null ? oldCustomerAccount.mergedInto : oldCustomerAccount._id,
+                        details: `Bill Items Adjusted ${newBill.billNo}`,
+                        credit: changedItemsAmount,
+                        reference: oldCustomerAccount.mergedInto !== null ? oldCustomerAccount.mergedInto : oldCustomerAccount._id,
+                    },
+                ]);
+            }
+
             // console.log("6")
             if (salesRevenueAccount && salesRevenueDifference !== 0) {
                 salesRevenueAccount.accountBalance += salesRevenueDifference;
@@ -730,7 +843,7 @@ const getBills = asyncHandler(async (req, res) => {
         .lean();
 
     const billsWithTotalQuantity = bills.map((bill) => {
-        const totalQuantity = bill.billItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
+        const totalQuantity = bill.billItems.reduce((sum, item) => sum + (item.quantity || item.billItemUnit), 0);
         return { ...bill, totalQuantity };
     });
 
@@ -806,14 +919,14 @@ const getSingleBill = asyncHandler(async (req, res) => {
         if (!user) {
             throw new ApiError(401, "Authorization Failed!");
         }
-    
+
         const BusinessId = user.BusinessId;
-    
+
         // Validate bill number
         if (!billNo) {
             throw new ApiError(400, "Bill number is required!");
         }
-    
+
         // Find the bill and populate all required details
         const bill = await Bill.findOne({ BusinessId, billNo })
             .populate({
@@ -847,11 +960,11 @@ const getSingleBill = asyncHandler(async (req, res) => {
                 ],
             })
             .lean(); // Convert Mongoose document to plain JS object for easier manipulation
-    
+
         if (!bill) {
             throw new ApiError(404, `No bill found with the number ${billNo}`);
         }
-    
+
         // Respond with the bill details
         return res.status(200).json(
             new ApiResponse(200, bill, "Bill retrieved successfully!")
@@ -931,7 +1044,7 @@ const billPayment = asyncHandler(async (req, res) => {
 
             customerIndividualAccount.accountBalance -= (amountPaid + flatDiscount);
 
-            if(customerIndividualAccount.mergedInto !== null){
+            if (customerIndividualAccount.mergedInto !== null) {
                 const mergedIntoAccount = await IndividualAccount.findById(customerIndividualAccount.mergedInto);
                 mergedIntoAccount.accountBalance -= (amountPaid + flatDiscount);
                 await mergedIntoAccount.save();

@@ -248,8 +248,7 @@ const registerProduct = asyncHandler(async (req, res) => {
                     { productPurchasePrice },
                     { categoryId },
                     { typeId },
-                    { vendorCompanyId },
-                    { vendorSupplierId },
+                    { companyId },
                     { productCode }
                 ]
             });
@@ -506,16 +505,6 @@ const updateProduct = asyncHandler(async (req, res) => {
                 const originalStatusPrice = lastStatusOfPrice.newPrice;
                 lastStatusOfPrice.newPrice = productPurchasePrice;
 
-                transaction.addOperation(
-                    async () => await lastStatusOfPrice.save(),
-                    async () => {
-                        lastStatusOfPrice.newPrice = originalStatusPrice;
-                        await lastStatusOfPrice.save();
-                    }
-                );
-
-                const oldPurchasedPrice = oldProduct.productPurchasePrice;
-
                 const originalPurchasePrice = oldProduct.productPurchasePrice;
                 oldProduct.productPurchasePrice = productPurchasePrice;
 
@@ -527,23 +516,6 @@ const updateProduct = asyncHandler(async (req, res) => {
                     }
                 );
 
-                // Update inventory individual account logic here
-                const inventoryAccount = await IndividualAccount.findOne({
-                    BusinessId,
-                    individualAccountName: "Inventory",
-                });
-                if (inventoryAccount) {
-                    const originalBalance = inventoryAccount.accountBalance;
-                    inventoryAccount.accountBalance += Number(productPurchasePrice) - Number(oldPurchasedPrice)
-
-                    transaction.addOperation(
-                        async () => await inventoryAccount.save(),
-                        async () => {
-                            inventoryAccount.accountBalance = originalBalance;
-                            await inventoryAccount.save();
-                        }
-                    );
-                }
             }
 
             // Update product total quantity and status of price remaining quantity if productPack or productTotalQuantity changes

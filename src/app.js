@@ -4,8 +4,7 @@ import cookieParser from "cookie-parser"
 
 const app = express();
 app.use(cors({
-    origin: 'https://pandas-frontend-new.vercel.app',
-    // origin: 'http://localhost:5173',
+    origin: process.env.CORS_ORIGIN,
     credentials: true
 }))
 
@@ -35,19 +34,4 @@ app.use("/api/v1/bill", billRoutes);
 app.use("/api/v1/saleReturn", saleReturnRoutes); 
 app.use("/api/v1/purchase", purchaseRoutes); 
 app.use("/api/v1/dashboard", dashboardRoutes); 
-
-import { ApiError } from "./utils/ApiError.js"; // adjust path if needed
-
-app.use((err, req, res, next) => {
-  console.error("🔥 Global Error Handler:", err.message);
-
-  const statusCode = err.statusCode || 500;
-
-  res.status(statusCode).json({
-    success: false,
-    message: err.message || "Internal Server Error",
-    errors: err.errors || [],
-    stack: process.env.NODE_ENV === "production" ? undefined : err.stack,
-  });
-});
 export { app }

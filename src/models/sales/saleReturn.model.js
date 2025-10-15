@@ -10,12 +10,16 @@ const SaleReturnItemSchema = new Schema({
     quantity: {
         type: Number,
         required: true,
-        min: 1 // Ensure quantity is at least 1
+        min: 0 // Ensure quantity is at least 1
     },
     returnPrice: {
         type: Number,
         required: true,
         min: 0 // Ensure price is non-negative
+    },
+    returnUnits: {
+        type: Number,
+        min: 0 
     },
     returnReason: {
         type: String,

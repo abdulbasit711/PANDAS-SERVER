@@ -38,17 +38,20 @@ const registerSaleReturn = asyncHandler(async (req, res) => {
             let totalPurchasePrice = 0;
             const processedReturnItems = [];
             for (const item of returnItems) {
-                const { productId, quantity } = item;
-
-                // Calculate purchase price for returned items
-                const purchasePrice = await Product.calculatePurchasePriceForReturn(productId, quantity);
-                totalPurchasePrice += purchasePrice;
-
-                // Update product quantity in inventory
+                const { productId, quantity, billItemUnit } = item;
                 const product = await Product.findById(productId);
                 if (!product) {
                     throw new ApiError(404, `Product not found for ID: ${productId}`);
                 }
+                // console.log('quantity', quantity)
+                // console.log('billItemUnit', billItemUnit)
+                const totalQuantity = (Number(quantity) * Number(product?.productPack)) + Number(billItemUnit)
+
+                // Calculate purchase price for returned items
+                const purchasePrice = await Product.calculatePurchasePriceForReturn(productId, totalQuantity);
+                totalPurchasePrice += purchasePrice;
+
+                // Update product quantity in inventory
 
                 const originalProductQuantity = product.productTotalQuantity;
                 product.productTotalQuantity += quantity;
@@ -70,16 +73,64 @@ const registerSaleReturn = asyncHandler(async (req, res) => {
                     productId,
                     quantity,
                     returnPrice: returnPrice, // Or calculate the return price
+                    returnUnits: billItemUnit
                 });
             }
 
-            const newBillId = await Bill.findOne({billNo: billId})
+
+            // Find the bill document if return is against bill
+            let billDoc = null;
+            if (returnType === 'againstBill') {
+                billDoc = await Bill.findOne({ BusinessId: BusinessId, billNo: billId });
+                if (!billDoc) {
+                    throw new ApiError(404, `Bill not found for billNo: ${billId}`);
+                }
+
+                // For each returned item, reduce the quantity in billItems
+                for (const returnItem of returnItems) {
+                    const { productId, quantity, billItemUnit } = returnItem;
+
+                    const product = await Product.findById(productId);
+
+                    const totalQuantity = (Number(quantity) * Number(product?.productPack)) + Number(billItemUnit);
+
+                    // console.log('item: ', billId)
+                    // console.log('productId: ', productId)
+
+                    const billItem = billDoc.billItems.find(
+                        (item) => item.productId.toString() === productId.toString()
+                    );
+
+                    if (!billItem) {
+                        throw new ApiError(404, `Product ${product?.productName} not found in bill items`);
+                    }
+
+                    // decrease quantity
+                    const originalQuantity = billItem.quantity;
+                    billItem.quantity -= Number(quantity);
+                    const originalUnits = billItem.billItemUnit;
+                    billItem.billItemUnit -= Number(billItemUnit)
+
+                    // Add rollback
+                    transaction.addOperation(
+                        async () => await billDoc.save(),
+                        async () => {
+                            billItem.quantity = originalQuantity;
+                            billItem.billItemUnit = originalUnits
+                            await billDoc.save();
+                        }
+                    );
+                }
+            }
+
+
+            // const newBillId = await Bill.findOne({ billNo: billId })
 
             // Create the sale return record
             const saleReturn = await SaleReturn.create({
                 BusinessId,
                 customer,
-                billId: returnType === 'againstBill' ? newBillId : null,
+                billId: returnType === 'againstBill' ? billDoc?._id : null,
                 returnType,
                 returnItems: processedReturnItems,
                 totalReturnAmount,
@@ -138,7 +189,7 @@ const registerSaleReturn = asyncHandler(async (req, res) => {
                 }
             );
 
-            const saleRevenueReturn = totalReturnAmount - totalPurchasePrice;
+            const saleRevenueReturn = Number(totalReturnAmount - totalPurchasePrice);
 
             const originalSalesRevenueBalance = salesRevenueAccount.accountBalance;
             salesRevenueAccount.accountBalance -= saleRevenueReturn;
@@ -151,11 +202,63 @@ const registerSaleReturn = asyncHandler(async (req, res) => {
                 }
             );
 
+            // console.log('totalPurchasePrice', totalPurchasePrice)
+            // console.log('totalReturnAmount', totalReturnAmount)
+            // console.log('saleRevenueReturn', saleRevenueReturn)
+            // console.log('billDoc.bollRevenue', billDoc.billRevenue)
+
+            if (returnType === 'againstBill') {
+
+                const originalBillRevenue = billDoc.billRevenue
+                billDoc.billRevenue -= Number(saleRevenueReturn)
+                const originalBillAmount = billDoc.totalAmount
+                billDoc.totalAmount -= Number(totalReturnAmount)
+
+                // Handle paidAmount depending on bill status
+                const originalPaidAmount = billDoc.paidAmount;
+
+                if (billDoc.billStatus === 'paid') {
+                    // Fully paid → decrease paidAmount same as return
+                    billDoc.paidAmount = Math.max(0, billDoc.paidAmount - Number(totalReturnAmount));
+
+                    // If paid drops below total, mark as partially paid
+                    if (billDoc.paidAmount < billDoc.totalAmount) {
+                        billDoc.billStatus = 'partiallypaid';
+                    }
+
+                } else if (billDoc.billStatus === 'partiallypaid') {
+                    // Cap paidAmount so it doesn't exceed new totalAmount
+                    if (billDoc.paidAmount > billDoc.totalAmount) {
+                        billDoc.paidAmount = billDoc.totalAmount;
+                    }
+
+                    // If paid == total, mark as fully paid
+                    if (billDoc.paidAmount === billDoc.totalAmount) {
+                        billDoc.billStatus = 'paid';
+                    }
+
+                } else if (billDoc.billStatus === 'unpaid') {
+                    // Just ensure no overpayment by mistake
+                    billDoc.paidAmount = 0;
+                }
+
+                transaction.addOperation(
+                    async () => await billDoc.save(),
+                    async () => {
+                        billDoc.billRevenue = originalBillRevenue;
+                        billDoc.totalAmount = originalBillAmount;
+                        billDoc.paidAmount = originalPaidAmount;
+                        await billDoc.save();
+                    }
+                );
+
+            }
+
             //Update customer account
             const originalCustomerBalance = customerIndividualAccount.accountBalance;
             customerIndividualAccount.accountBalance -= totalReturnAmount;
 
-            if(customerIndividualAccount.mergedInto !== null){
+            if (customerIndividualAccount.mergedInto !== null) {
                 const mergedIntoAccount = await IndividualAccount.findById(customerIndividualAccount.mergedInto);
                 mergedIntoAccount.accountBalance -= totalReturnAmount
                 await mergedIntoAccount.save();
@@ -170,7 +273,7 @@ const registerSaleReturn = asyncHandler(async (req, res) => {
             )
 
             // Record the transaction in the general ledger
-            if (returnType === 'againstBill' || customer) {
+            if (customer) {
                 await GeneralLedger.create({
                     BusinessId,
                     individualAccountId: customerIndividualAccount.mergedInto !== null ? customerIndividualAccount.mergedInto : customerIndividualAccount._id,

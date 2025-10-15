@@ -58,21 +58,66 @@ const registerPurchase = asyncHandler(async (req, res) => {
                 const productTotalQuantity = item.quantity * item.productPack;
                 const isPriceChanged = item.pricePerUnit !== product.productPurchasePrice;
 
-                if (isPriceChanged) {
-                    await StatusOfPrice.create({
-                        productId: product._id,
-                        oldPrice: product.productPurchasePrice,
-                        newPrice: item.pricePerUnit,
-                        remainingQuantity: productTotalQuantity,
-                        changedBy: user._id,
-                    });
-                } else {
-                    const recentStatusOfPrice = await StatusOfPrice.findOne(
-                        { productId: product._id },
-                        {},
-                        { sort: { createdAt: -1 } }
-                    );
+                const recentStatusOfPrice = await StatusOfPrice.findOne(
+                    { productId: product._id },
+                    {},
+                    { sort: { createdAt: -1 } }
+                );
 
+                if (isPriceChanged) {
+                    if (recentStatusOfPrice) {
+                        if (recentStatusOfPrice.remainingQuantity >= 0) {
+                            // ✅ No negative stock → just create a fresh entry
+                            await StatusOfPrice.create({
+                                productId: product._id,
+                                oldPrice: product.productPurchasePrice,
+                                newPrice: item.pricePerUnit,
+                                remainingQuantity: productTotalQuantity,
+                                changedBy: user._id,
+                            });
+                        } else {
+                            // ✅ Negative stock → offset with this purchase
+                            let carryQuantity = productTotalQuantity;
+                            recentStatusOfPrice.remainingQuantity += carryQuantity;
+
+                            if (recentStatusOfPrice.newPrice == 0) {
+                                recentStatusOfPrice.newPrice = product.productPurchasePrice
+                            }
+
+                            if (recentStatusOfPrice.remainingQuantity <= 0) {
+                                // All this purchase went to settle negative stock → update and done
+                                await recentStatusOfPrice.save();
+                            } else {
+                                // Part of this purchase settled the negative, rest becomes new batch
+                                const remainingAfterFix = recentStatusOfPrice.remainingQuantity;
+                                recentStatusOfPrice.remainingQuantity = 0;
+                                await recentStatusOfPrice.save();
+
+                                const leftoverQuantity = carryQuantity - remainingAfterFix;
+
+                                if (leftoverQuantity > 0) {
+                                    await StatusOfPrice.create({
+                                        productId: product._id,
+                                        oldPrice: product.productPurchasePrice,
+                                        newPrice: item.pricePerUnit,
+                                        remainingQuantity: leftoverQuantity,
+                                        changedBy: user._id,
+                                    });
+                                }
+                            }
+                        }
+                    } else {
+                        // First time purchase for this product
+                        await StatusOfPrice.create({
+                            productId: product._id,
+                            oldPrice: product.productPurchasePrice,
+                            newPrice: item.pricePerUnit,
+                            remainingQuantity: productTotalQuantity,
+                            changedBy: user._id,
+                        });
+                    }
+                } else {
+                    // Price not changed → extend recent status or create new one
                     if (recentStatusOfPrice) {
                         const originalQuantity = recentStatusOfPrice.remainingQuantity;
                         recentStatusOfPrice.remainingQuantity += productTotalQuantity;
@@ -94,6 +139,7 @@ const registerPurchase = asyncHandler(async (req, res) => {
                         });
                     }
                 }
+
 
                 const originalProductTotalQuantity = product.productTotalQuantity;
                 product.productTotalQuantity += productTotalQuantity;
@@ -201,7 +247,7 @@ const registerPurchase = asyncHandler(async (req, res) => {
             const originalVendorBalance = vendorIndividualAccount.accountBalance;
             vendorIndividualAccount.accountBalance += totalAmount;
 
-            if(vendorIndividualAccount.mergedInto !== null){
+            if (vendorIndividualAccount.mergedInto !== null) {
                 const mergedIndividualAccount = await IndividualAccount.findById(
                     vendorIndividualAccount.mergedInto
                 );
@@ -263,7 +309,7 @@ const registerPurchase = asyncHandler(async (req, res) => {
 });
 
 const registerPurchaseReturn = asyncHandler(async (req, res) => {
-    const {vendorSupplierId, vendorCompanyId, returnItems, returnReason } = req.body;
+    const { vendorSupplierId, vendorCompanyId, returnItems, returnReason } = req.body;
     const user = req.user;
 
     if (!user) {
@@ -276,7 +322,7 @@ const registerPurchaseReturn = asyncHandler(async (req, res) => {
     try {
         await transactionManager.run(async (transaction) => {
             // Validate input
-            if ( !returnItems || !returnItems.length) {
+            if (!returnItems || !returnItems.length) {
                 throw new ApiError(400, "Return Items Required!");
             }
 
@@ -337,7 +383,7 @@ const registerPurchaseReturn = asyncHandler(async (req, res) => {
             const originalVendorBalance = vendorIndividualAccount.accountBalance;
             vendorIndividualAccount.accountBalance -= totalPurchasePrice;
 
-            if(vendorIndividualAccount.mergedInto !== null){
+            if (vendorIndividualAccount.mergedInto !== null) {
                 const mergedIndividualAccount = await IndividualAccount.findById(
                     vendorIndividualAccount.mergedInto
                 );
@@ -383,7 +429,7 @@ const registerPurchaseReturn = asyncHandler(async (req, res) => {
             if (!accountPayableAccount) {
                 throw new ApiError(404, "Account Payables account not found!");
             }
-            
+
             const originalAccountPayableBalance = accountPayableAccount.accountBalance;
             accountPayableAccount.accountBalance -= totalPurchasePrice;
 
@@ -399,7 +445,7 @@ const registerPurchaseReturn = asyncHandler(async (req, res) => {
             await GeneralLedger.create({
                 BusinessId,
                 individualAccountId: vendorIndividualAccount.mergedInto !== null ? vendorIndividualAccount.mergedInto : vendorIndividualAccount._id,
-                details: returnItems.length === 1 ?  `Purchase Return of ${productName}` : `Purchase Return of ${returnItems.length} items`,
+                details: returnItems.length === 1 ? `Purchase Return of ${productName}` : `Purchase Return of ${returnItems.length} items`,
                 debit: totalPurchasePrice,
                 description: returnReason,
                 reference: vendorIndividualAccount.mergedInto !== null ? vendorIndividualAccount.mergedInto : vendorIndividualAccount._id,
@@ -463,8 +509,8 @@ const getPurchases = asyncHandler(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, purchasesWithTotalQuantity, "Purchases retrieved successfully!"));
 });
 
-export { 
+export {
     registerPurchase,
     registerPurchaseReturn,
     getPurchases,
- };
+};

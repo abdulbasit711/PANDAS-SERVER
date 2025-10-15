@@ -7,6 +7,7 @@ import { registerProduct, getProducts, updateProduct,
     deleteProduct,
     getExpiryReport
 } from "../controllers/product.controller.js";
+import { getReports } from "../controllers/report.controller.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js"
 
 const router = Router();
@@ -30,6 +31,7 @@ router.route("/expiry-report").get(verifyJWT, getExpiryReport)
 router.route("/image/:productId").get(verifyJWT, createBarcode)
 router.route("/barcode-pdf").post(verifyJWT, barcodePDF)
 router.route("/get-products-without-barcode").get(verifyJWT, allProductsWithoutBarcode)
+router.route("/get-report").get(verifyJWT, getReports)
 
 
 
