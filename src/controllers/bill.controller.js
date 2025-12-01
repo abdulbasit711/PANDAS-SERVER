@@ -11,6 +11,7 @@ import { AccountReceivable } from "../models/accounts/accountsReceivables.model.
 import { Product } from "../models/product/product.model.js";
 import { GeneralLedger } from "../models/accounts/generalLedger.model.js";
 import { TransactionManager, AppTransaction } from "../utils/TransactionManager.js";
+import { sendWhatsappMessage } from "../services/whatsapp.service.js";
 
 
 const registerBill = asyncHandler(async (req, res) => {
@@ -39,6 +40,14 @@ const registerBill = asyncHandler(async (req, res) => {
             const user = req.user;
             if (!user) {
                 throw new ApiError(401, "Authorization Failed!");
+            }
+
+            let customerDetails;
+
+            if (customer) {
+                const customerRes = await Customer.findById(customer)
+                // console.log('customer', customerRes)
+                customerDetails = customerRes;
             }
 
             const BusinessId = user.BusinessId;
@@ -289,6 +298,38 @@ const registerBill = asyncHandler(async (req, res) => {
                     ].filter(Boolean)
                 );
             }
+
+
+            let mobileNo;
+
+            if (customerDetails && customerDetails.mobileNo) {
+                let raw = customerDetails.mobileNo;
+
+                // Remove spaces, dashes, brackets, etc.
+                raw = raw.replace(/[^0-9+]/g, "");
+
+                // If it starts with "0", replace with "+92"
+                if (raw.startsWith("0")) {
+                    mobileNo = "92" + raw.slice(1);
+                }
+                // If it already starts with "+92", keep as is
+                else if (raw.startsWith("92")) {
+                    mobileNo = raw;
+                }
+                // If it starts with "92" but no "+", add it
+                else if (raw.startsWith("92")) {
+                    mobileNo = "" + raw;
+                }
+                // Otherwise, just add "+92"
+                else {
+                    mobileNo = "92" + raw;
+                }
+            }
+
+
+            // if (customer && mobileNo) {
+            //     await sendWhatsappMessage(mobileNo, `Thank you for choosing Parko Electric & Electronics`);
+            // }
 
             // const test = true;
             // if(test){
@@ -549,7 +590,7 @@ const updateBill = asyncHandler(async (req, res) => {
 
                 const StatusOfPrice = mongoose.model("StatusOfPrice");
 
-                
+
 
                 // Handle all new and existing items
                 for (const [productId, newItem] of newItemsMap) {
@@ -608,7 +649,7 @@ const updateBill = asyncHandler(async (req, res) => {
                         if (!product) throw new ApiError(404, `Product not found for ID: ${productId}`);
 
                         const originalProductQuantity = product.productTotalQuantity;
-                        product.productTotalQuantity += (oldItem.quantity  * product.productPack);
+                        product.productTotalQuantity += (oldItem.quantity * product.productPack);
 
                         changedItemsAmount += oldItem.quantity * oldItem.billItemPrice;
 
@@ -618,7 +659,7 @@ const updateBill = asyncHandler(async (req, res) => {
                         const latestStatus = await StatusOfPrice.findOne({ productId }).sort({ createdAt: -1 });
                         if (latestStatus) {
                             const originalRemaining = latestStatus.remainingQuantity;
-                            latestStatus.remainingQuantity += (oldItem.quantity  * product.productPack);
+                            latestStatus.remainingQuantity += (oldItem.quantity * product.productPack);
 
                             transaction.addOperation(
                                 async () => {
@@ -793,6 +834,7 @@ const updateBill = asyncHandler(async (req, res) => {
 
             // console.log("6")
             if (salesRevenueAccount && salesRevenueDifference !== 0) {
+                newBill.billRevenue = newSalesRevenue;
                 salesRevenueAccount.accountBalance += salesRevenueDifference;
                 await salesRevenueAccount.save();
             }

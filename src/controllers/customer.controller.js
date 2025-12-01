@@ -189,9 +189,65 @@ const getAllCustomers = asyncHandler(async (req, res) => {
     }
 })
 
+const deleteCustomer = asyncHandler(async (req, res) => {
+    const { customerId } = req.params;
+
+    if (!customerId) {
+        throw new ApiError(400, "Customer ID is required!");
+    }
+
+    const user = req.user;
+    if (!user) {
+        throw new ApiError(401, "Authorization Failed!");
+    }
+
+    const BusinessId = user.BusinessId;
+
+    // Fetch customer
+    const customer = await Customer.findOne({ _id: customerId, BusinessId });
+    if (!customer) {
+        throw new ApiError(404, "Customer not found!");
+    }
+
+    const ledgerId = customer.ledgerId;
+
+    const transactionManager = new TransactionManager();
+
+    try {
+        await transactionManager.run(async (transaction) => {
+
+            // Delete the Customer
+            transaction.addOperation(
+                async () => await Customer.deleteOne({ _id: customerId }),
+                async () => await customer.save() // rollback
+            );
+
+            // Delete related Individual Account
+            if (ledgerId) {
+                const individualAcc = await IndividualAccount.findById(ledgerId);
+
+                if (individualAcc) {
+                    transaction.addOperation(
+                        async () => await IndividualAccount.deleteOne({ _id: ledgerId }),
+                        async () => await individualAcc.save() // rollback
+                    );
+                }
+            }
+
+            return res
+                .status(200)
+                .json(new ApiResponse(200, null, "Customer deleted successfully"));
+
+        });
+    } catch (error) {
+        throw new ApiError(500, `Deletion failed: ${error.message}`);
+    }
+});
+
 
 export {
     registerCustomer,
     getAllCustomers,
-    updateCustomerDetails
+    updateCustomerDetails,
+    deleteCustomer
 }
