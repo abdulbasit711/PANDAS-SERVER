@@ -130,9 +130,10 @@
 // };
 
 // // Check WhatsApp connection status
-// export const checkWhatsappStatus = async () => {
-//     return { ready: clientReady };
-// };
+export const checkWhatsappStatus = async () => {
+    return;
+    // return { ready: clientReady };
+};
 
 // // Send WhatsApp Message
 // export const sendWhatsappMessage = async (number, message) => {
