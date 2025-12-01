@@ -4,7 +4,7 @@ import connectDB from './db/index.js'
 import express from 'express'
 import { app } from './app.js'
 import { initWhatsapp } from './services/whatsapp.service.js'
-import "./schedulers/whatsappScheduler.js";
+// import "./schedulers/whatsappScheduler.js";
 
 
 dotenv.config({
@@ -20,7 +20,7 @@ connectDB()
         port, 
         () => {
             console.log(`server is running on ${port}`)
-            initWhatsapp();
+            // initWhatsapp();
         }
     )
 })

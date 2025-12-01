@@ -11,7 +11,7 @@ import { AccountReceivable } from "../models/accounts/accountsReceivables.model.
 import { Product } from "../models/product/product.model.js";
 import { GeneralLedger } from "../models/accounts/generalLedger.model.js";
 import { TransactionManager, AppTransaction } from "../utils/TransactionManager.js";
-import { sendWhatsappMessage } from "../services/whatsapp.service.js";
+// import { sendWhatsappMessage } from "../services/whatsapp.service.js";
 
 
 const registerBill = asyncHandler(async (req, res) => {
