@@ -3,7 +3,7 @@ import dotenv from 'dotenv'
 import connectDB from './db/index.js'
 import express from 'express'
 import { app } from './app.js'
-import { initWhatsapp } from './services/whatsapp.service.js'
+// import { initWhatsapp } from './services/whatsapp.service.js'
 // import "./schedulers/whatsappScheduler.js";
 
 
